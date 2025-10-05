@@ -5,18 +5,14 @@ import numpy as np
 from tensorflow.keras.models import load_model
 
 app = Flask(__name__)
-CORS(app)
 
-# ✅ Path to your LSTM model
+# ✅ Allow frontend (Vercel) to connect
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+# ✅ Load model
 MODEL_PATH = "lstm_model.h5"
-
-# Load model once at startup
-try:
-    model = load_model(MODEL_PATH, compile=False)
-    model.compile(optimizer='adam', loss='mse')
-    print("✅ Model loaded successfully.")
-except Exception as e:
-    print("❌ Error loading model:", e)
+model = load_model(MODEL_PATH, compile=False)
+model.compile(optimizer='adam', loss='mse')
 
 @app.route('/')
 def home():
@@ -29,26 +25,31 @@ def predict():
             return jsonify({'error': 'No file uploaded'}), 400
 
         file = request.files['file']
-        if file.filename.endswith('.csv'):
+        filename = file.filename.lower()
+
+        # ✅ Handle both CSV and Excel
+        if filename.endswith('.csv'):
             df = pd.read_csv(file)
-        else:
+        elif filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file)
+        else:
+            return jsonify({'error': 'Unsupported file format'}), 400
 
-        # Clean and normalize column names
+        # ✅ Clean column names
         df.columns = [c.strip().lower().replace(' ', '_').replace('(m)', '') for c in df.columns]
-        print("🧹 Cleaned columns:", df.columns.tolist())
+        print("Cleaned columns:", df.columns.tolist())
 
-        # Verify required column
         if 'x_error' not in df.columns:
-            return jsonify({'error': "Column 'x_error' missing in uploaded file"}), 400
+            return jsonify({'error': "Column 'x_error' missing in file"}), 400
 
+        # ✅ Predict using model
         X = np.expand_dims(df['x_error'].values, axis=0)
         y_pred = model.predict(X).tolist()
 
         return jsonify({'prediction': y_pred})
 
     except Exception as e:
-        print("❌ Error during prediction:", e)
+        print("Error:", e)
         return jsonify({'error': str(e)}), 500
 
 
