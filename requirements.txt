@@ -1,7 +1,7 @@
 Flask
 flask-cors
-tensorflow
 pandas
 numpy
+tensorflow==2.15.0
 gunicorn
 openpyxl
