@@ -4,15 +4,21 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import numpy as np
 import pandas as pd
+import traceback
 
 app = Flask(__name__)
 
-# ✅ Allow CORS for all routes and origins (important for frontend connection)
+# ✅ Allow CORS for all routes and origins (so frontend can call backend)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# ✅ Load the updated model
+# ✅ Load the trained model
 MODEL_PATH = "fixed_model.h5"
-model = load_model(MODEL_PATH, compile=False)
+
+try:
+    model = load_model(MODEL_PATH, compile=False)
+    print("✅ Model loaded successfully.")
+except Exception as e:
+    print(f"❌ Error loading model: {e}")
 
 @app.route('/')
 def home():
@@ -21,33 +27,31 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # Check if file is uploaded
+        print("\n🚀 Received request for /predict")
+
+        # ✅ Step 1: Check if file is uploaded
         if 'file' not in request.files:
+            print("❌ No file found in request")
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
+        print(f"📂 Received file: {file.filename}")
 
-        # ✅ Read CSV safely
+        # ✅ Step 2: Try reading the file as CSV
         try:
             df = pd.read_csv(file)
-        except Exception:
+            print(f"✅ CSV loaded successfully. Shape: {df.shape}")
+        except Exception as e:
+            print(f"❌ Error reading CSV: {e}")
             return jsonify({"error": "Invalid file format. Please upload a valid CSV file."}), 400
 
-        # ✅ Basic shape check before prediction
+        # ✅ Step 3: Validate column count
         if df.shape[1] != 13:
+            print(f"❌ Invalid number of columns: {df.shape[1]}")
             return jsonify({"error": f"Expected 13 features, got {df.shape[1]}"}), 400
 
-        # ✅ Assuming dataset has 48 timesteps and 13 features
-        try:
-            data = df.values.reshape((1, 48, 13))
-        except Exception:
-            return jsonify({"error": "Data shape is invalid for model input."}), 400
+        # ✅ Step 4: Reshape safely for model
+        rows = df.shape[0]
+        print(f"📊 Total rows detected: {rows}")
 
-        preds = model.predict(data)
-        return jsonify({"predictions": preds.tolist()})
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+        timesteps = 48  # Expected timesteps for LSTM model
