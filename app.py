@@ -6,70 +6,93 @@ import numpy as np
 import pandas as pd
 import os
 
+# ----------------------------------------------------
+# 🌐 Flask App Initialization
+# ----------------------------------------------------
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app)
 
-# ✅ Load model safely
+# ----------------------------------------------------
+# 🧠 Load Your Trained Model
+# ----------------------------------------------------
 MODEL_PATH = "fixed_model.h5"
-
 if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(f"❌ Model file not found: {MODEL_PATH}")
+    raise FileNotFoundError("❌ Model file 'fixed_model.h5' not found in directory!")
 
-try:
-    model = load_model(MODEL_PATH, compile=False)
-    print("✅ Model loaded successfully!")
-except Exception as e:
-    print("❌ Error loading model:", e)
-    raise e
+model = load_model(MODEL_PATH, compile=False)
+print("✅ Model loaded successfully!")
 
-
+# ----------------------------------------------------
+# 🏠 Home Route (Health Check)
+# ----------------------------------------------------
 @app.route('/')
 def home():
     return jsonify({"message": "GNSS Error Prediction Backend is Live 🚀"})
 
-
+# ----------------------------------------------------
+# 🔮 Prediction Route
+# ----------------------------------------------------
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
+        # ✅ Check file upload
         if 'file' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
         filename = file.filename.lower()
 
-        # ✅ Support both CSV and Excel formats
+        # ✅ Read the file based on its extension
         if filename.endswith('.csv'):
             df = pd.read_csv(file)
-        elif filename.endswith(('.xls', '.xlsx')):
+        elif filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file)
         else:
-            return jsonify({"error": "Invalid file format. Upload CSV or Excel only."}), 400
+            return jsonify({"error": "Unsupported file format. Please upload CSV or Excel."}), 400
 
-        print(f"✅ File loaded successfully: {filename}")
-        print(f"📊 Data shape: {df.shape}")
+        # ✅ Drop non-numeric columns like utc_time if present
+        if 'utc_time' in df.columns:
+            df = df.drop(columns=['utc_time'])
 
-        # ✅ Check number of columns (expected 13)
-        if df.shape[1] != 13:
-            return jsonify({"error": f"Expected 13 features, got {df.shape[1]}"}), 400
+        # ✅ Select only numeric data and handle NaNs
+        df = df.select_dtypes(include=[np.number]).fillna(0)
 
-        # ✅ Check number of rows
-        if df.shape[0] < 48:
-            return jsonify({"error": f"Need at least 48 rows for prediction, got {df.shape[0]}"}), 400
+        # ----------------------------------------------------
+        # 🧩 Check dataset shape consistency
+        # ----------------------------------------------------
+        expected_features = 5   # Columns: x_error, y_error, z_error, satclockerror, etc.
+        timesteps = 48          # Your LSTM input sequence length
 
-        # ✅ Prepare last 48 timesteps for prediction
-        data = df.tail(48).values.reshape((1, 48, 13))
-        print("✅ Data reshaped successfully:", data.shape)
+        if df.shape[1] != expected_features:
+            return jsonify({"error": f"Expected {expected_features} features, got {df.shape[1]}"}), 400
 
-        preds = model.predict(data)
-        print("✅ Prediction completed!")
+        # ✅ Ensure exactly 48 timesteps by slicing or padding
+        data = df.values[-timesteps:]  # Take last 48 rows
+        if data.shape[0] < timesteps:
+            padding = np.zeros((timesteps - data.shape[0], data.shape[1]))
+            data = np.vstack((padding, data))
 
-        return jsonify({"predictions": preds.tolist()})
+        # ✅ Reshape for LSTM input (1, 48, 5)
+        x_input = np.expand_dims(data, axis=0)
+
+        # ----------------------------------------------------
+        # 🧠 Make Prediction
+        # ----------------------------------------------------
+        prediction = model.predict(x_input)
+        prediction_list = prediction.tolist()
+
+        return jsonify({
+            "message": "Prediction successful!",
+            "input_shape": list(x_input.shape),
+            "prediction": prediction_list
+        })
 
     except Exception as e:
-        print("❌ Error during prediction:", e)
+        print("❌ Error during prediction:", str(e))
         return jsonify({"error": str(e)}), 500
 
-
+# ----------------------------------------------------
+# 🚀 Main Entry Point
+# ----------------------------------------------------
 if __name__ == '__main__':
-    print("🚀 Starting Flask app...")
     app.run(host='0.0.0.0', port=10000)
