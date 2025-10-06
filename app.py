@@ -55,3 +55,32 @@ def predict():
         print(f"📊 Total rows detected: {rows}")
 
         timesteps = 48  # Expected timesteps for LSTM model
+
+        # Automatically handle shorter or longer sequences
+        if rows > timesteps:
+            print(f"✂️ Trimming data from {rows} → {timesteps} timesteps")
+            df = df.iloc[:timesteps]
+        elif rows < timesteps:
+            print(f"📈 Padding data from {rows} → {timesteps} timesteps")
+            pad_rows = timesteps - rows
+            pad_df = pd.DataFrame(np.zeros((pad_rows, df.shape[1])), columns=df.columns)
+            df = pd.concat([df, pad_df], ignore_index=True)
+
+        data = df.values.reshape((1, timesteps, 13))
+        print(f"✅ Data reshaped successfully: {data.shape}")
+
+        # ✅ Step 5: Predict with model
+        preds = model.predict(data)
+        print("✅ Model prediction successful")
+
+        # ✅ Step 6: Return prediction
+        return jsonify({"predictions": preds.tolist()})
+
+    except Exception as e:
+        print("❌ Unexpected error:")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
