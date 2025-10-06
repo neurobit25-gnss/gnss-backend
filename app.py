@@ -4,15 +4,13 @@ import tensorflow as tf
 from tensorflow.keras.models import load_model
 import numpy as np
 import pandas as pd
-import os
+import io
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# ✅ Load the trained model
+# ✅ Load your trained model
 MODEL_PATH = "fixed_model.h5"
-if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(f"Model file not found at path: {MODEL_PATH}")
 model = load_model(MODEL_PATH, compile=False)
 
 @app.route('/')
@@ -22,60 +20,40 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # ✅ Ensure file exists
         if 'file' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
         filename = file.filename.lower()
 
-        # ✅ Read the file
+        # ✅ Handle different file formats
         if filename.endswith('.csv'):
             df = pd.read_csv(file)
         elif filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file)
         else:
-            return jsonify({"error": "Unsupported file type. Please upload a CSV or Excel file."}), 400
+            return jsonify({"error": "Unsupported file format. Upload CSV or Excel files only."}), 400
 
-        if df.empty:
-            return jsonify({"error": "Uploaded file is empty."}), 400
+        # ✅ Basic validation
+        if df.shape[1] < 5:
+            return jsonify({"error": f"Expected at least 5 features, got {df.shape[1]}"}), 400
 
-        # ✅ Model expects 5 features
-        expected_features = 5
+        # ✅ Dynamically reshape based on available features
         timesteps = 48
+        num_features = df.shape[1]
+        total_values = df.shape[0] * df.shape[1]
 
-        # ✅ Validate column count
-        if df.shape[1] != expected_features:
-            return jsonify({
-                "error": f"Expected {expected_features} features, got {df.shape[1]}"
-            }), 400
+        # Ensure enough data for 48 timesteps
+        if total_values < timesteps * num_features:
+            return jsonify({"error": f"Not enough data to reshape into (1, {timesteps}, {num_features})"}), 400
 
-        num_rows = df.shape[0]
-        data = df.values
+        reshaped_data = df.values[:timesteps * num_features].reshape((1, timesteps, num_features))
 
-        # ✅ Automatically handle shorter or longer sequences
-        if num_rows < timesteps:
-            # Pad with zeros if not enough data
-            padding = np.zeros((timesteps - num_rows, expected_features))
-            data = np.vstack((padding, data))
-        elif num_rows > timesteps:
-            # Use the last 48 rows if too long
-            data = data[-timesteps:, :]
-
-        # ✅ Reshape to match LSTM input
-        data = data.reshape((1, timesteps, expected_features))
-
-        # ✅ Make prediction
-        preds = model.predict(data)
-        preds_list = preds.tolist()
-
-        return jsonify({
-            "message": "Prediction successful 🎯",
-            "shape_used": [1, timesteps, expected_features],
-            "predictions": preds_list
-        })
+        preds = model.predict(reshaped_data)
+        return jsonify({"prediction": preds.tolist()})
 
     except Exception as e:
+        print("❌ Backend Error:", e)
         return jsonify({"error": str(e)}), 500
 
 
