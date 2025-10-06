@@ -64,3 +64,23 @@ def predict():
         elif rows < timesteps:
             pad_rows = timesteps - rows
             pad_df = pd.DataFrame(np.zeros((pad_rows, df.shape[1])), columns=df.columns)
+            df = pd.concat([df, pad_df], ignore_index=True)
+
+        # ✅ Step 5: Prepare data for prediction
+        data = df.values.reshape((1, timesteps, 13))
+        print(f"✅ Data reshaped for model input: {data.shape}")
+
+        # ✅ Step 6: Run prediction
+        preds = model.predict(data)
+        print("✅ Model prediction completed")
+
+        return jsonify({"predictions": preds.tolist()})
+
+    except Exception as e:
+        print("❌ Unexpected error:")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
