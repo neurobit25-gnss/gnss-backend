@@ -8,28 +8,34 @@ import io
 
 app = Flask(__name__)
 
-# ✅ Allow Vercel frontend access (add localhost for safety)
+# ✅ Allow both local and Vercel frontend access
 CORS(app, resources={r"/*": {"origins": ["https://gnss-xi.vercel.app", "http://localhost:5173"]}})
 
-# ✅ Load model once
+# ✅ Load the model once at startup
 MODEL_PATH = "fixed_model.h5"
-model = load_model(MODEL_PATH, compile=False)
+try:
+    model = load_model(MODEL_PATH, compile=False)
+    print("✅ Model loaded successfully.")
+except Exception as e:
+    print("❌ Model loading failed:", e)
+    model = None
+
 
 @app.route('/')
 def home():
-    return jsonify({"message": "GNSS Error Prediction Backend is Live 🚀"})
+    return jsonify({"message": "✅ GNSS Error Prediction Backend is Live"}), 200
+
 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # ✅ Check file
         if 'file' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
         filename = file.filename.lower()
 
-        # ✅ Read CSV or Excel
+        # ✅ Read CSV / Excel files
         if filename.endswith('.csv'):
             df = pd.read_csv(file)
         elif filename.endswith(('.xls', '.xlsx')):
@@ -37,19 +43,38 @@ def predict():
         else:
             return jsonify({"error": "Unsupported file format. Please upload a CSV or Excel file."}), 400
 
-        # ✅ Validate input columns
-        if df.shape[1] not in [5, 13]:
-            return jsonify({"error": f"Invalid input shape. Expected 5 or 13 columns, got {df.shape[1]}"}), 400
+        # ✅ Validate that model is loaded
+        if model is None:
+            return jsonify({"error": "Model failed to load on the server."}), 500
 
-        # ✅ Reshape and predict
-        time_steps = df.shape[0] // 48
-        data = df.values[:time_steps * 48].reshape((time_steps, 48, df.shape[1]))
+        # ✅ Clean up NaN values
+        df = df.dropna()
+        if df.empty:
+            return jsonify({"error": "Uploaded file is empty or invalid."}), 400
+
+        # ✅ Ensure correct shape
+        n_features = df.shape[1]
+        if n_features not in [5, 13]:
+            return jsonify({"error": f"Invalid number of columns: {n_features}. Expected 5 or 13."}), 400
+
+        # ✅ Convert and reshape safely
+        data = df.values.astype(float)
+        time_steps = min(48, len(data))  # Trim or use first 48 samples
+        data = data[:time_steps].reshape((1, time_steps, n_features))
+
+        # ✅ Run prediction
         preds = model.predict(data)
+        preds_list = preds.flatten().tolist()
 
-        return jsonify({"prediction": preds.tolist()})
+        return jsonify({
+            "status": "success",
+            "message": "Prediction completed successfully.",
+            "prediction": preds_list[:10]  # return first 10 values
+        }), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("❌ Error during prediction:", e)
+        return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
