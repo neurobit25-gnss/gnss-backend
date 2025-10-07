@@ -2,74 +2,87 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import tensorflow as tf
 from tensorflow.keras.models import load_model
-import pandas as pd
 import numpy as np
-import io
+import pandas as pd
+import os
 
+# ---------------------------------------------------------------------
+# ✅ Flask Setup
+# ---------------------------------------------------------------------
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# ✅ Allow both local and Vercel frontend access
-CORS(app, resources={r"/*": {"origins": ["https://gnss-xi.vercel.app", "http://localhost:5173"]}})
-
-# ✅ Load the model once at startup
+# ---------------------------------------------------------------------
+# ✅ Model Loading
+# ---------------------------------------------------------------------
 MODEL_PATH = "fixed_model.h5"
+
 try:
     model = load_model(MODEL_PATH, compile=False)
     print("✅ Model loaded successfully.")
 except Exception as e:
-    print("❌ Model loading failed:", e)
+    print(f"❌ Error loading model: {e}")
     model = None
 
 
+# ---------------------------------------------------------------------
+# ✅ Health Check Route
+# ---------------------------------------------------------------------
 @app.route('/')
 def home():
     return jsonify({"message": "✅ GNSS Error Prediction Backend is Live"}), 200
 
 
+# ---------------------------------------------------------------------
+# ✅ Prediction Route
+# ---------------------------------------------------------------------
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
+        if model is None:
+            return jsonify({"error": "Model not loaded on server"}), 500
+
+        # ✅ Check file
         if 'file' not in request.files:
             return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files['file']
         filename = file.filename.lower()
 
-        # ✅ Read CSV / Excel files
+        # ✅ Handle CSV / Excel
         if filename.endswith('.csv'):
             df = pd.read_csv(file)
         elif filename.endswith(('.xls', '.xlsx')):
             df = pd.read_excel(file)
         else:
-            return jsonify({"error": "Unsupported file format. Please upload a CSV or Excel file."}), 400
+            return jsonify({"error": "Unsupported file format. Please upload CSV or Excel."}), 400
 
-        # ✅ Validate that model is loaded
-        if model is None:
-            return jsonify({"error": "Model failed to load on the server."}), 500
+        # ✅ Keep only numeric columns (ignore utc_time)
+        numeric_df = df.select_dtypes(include=[np.number])
 
-        # ✅ Clean up NaN values
-        df = df.dropna()
-        if df.empty:
-            return jsonify({"error": "Uploaded file is empty or invalid."}), 400
+        if numeric_df.empty:
+            return jsonify({"error": "No numeric columns found in uploaded file."}), 400
 
-        # ✅ Ensure correct shape
-        n_features = df.shape[1]
-        if n_features not in [5, 13]:
-            return jsonify({"error": f"Invalid number of columns: {n_features}. Expected 5 or 13."}), 400
+        # ✅ Expecting 5 features (x_error, y_error, z_error, clock error, etc.)
+        if numeric_df.shape[1] != 5:
+            return jsonify({"error": f"Expected 5 numeric columns, got {numeric_df.shape[1]}"}), 400
 
-        # ✅ Convert and reshape safely
-        data = df.values.astype(float)
-        time_steps = min(48, len(data))  # Trim or use first 48 samples
-        data = data[:time_steps].reshape((1, time_steps, n_features))
+        # ✅ Convert to numpy array
+        data = numeric_df.values.astype(float)
 
-        # ✅ Run prediction
+        # ✅ Limit or pad to 48 timesteps for LSTM
+        time_steps = min(48, len(data))
+        data = data[:time_steps].reshape((1, time_steps, 5))
+
+        # ✅ Run Prediction
         preds = model.predict(data)
         preds_list = preds.flatten().tolist()
 
+        # ✅ Response
         return jsonify({
             "status": "success",
             "message": "Prediction completed successfully.",
-            "prediction": preds_list[:10]  # return first 10 values
+            "prediction": preds_list[:10]  # Send first 10 predicted values for display
         }), 200
 
     except Exception as e:
@@ -77,5 +90,9 @@ def predict():
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
 
+# ---------------------------------------------------------------------
+# ✅ Server Entry Point
+# ---------------------------------------------------------------------
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
